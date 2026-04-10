@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OER AI Agent - Open Educational Resources Finder</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>OER AI Agent</h1>
+            <p class="subtitle">AI-Powered Open Educational Resources Finder for DEMO for CLIENTS - ITEC 4700</p>
+        </header>
+
+        <main>
+            <section class="search-section">
+                <h2>Find OER Resources for Your Course</h2>
+                <form id="searchForm">
+                    <div class="form-group">
+                        <label for="department">Department</label>
+                        <select style="width: 250px; height: 40px;" id="department" name="department" required>
+                            <option value="">Loading departments...</option>
+                        </select>
+                        <small>Select your department first, then choose a course code.</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="courseCode">Course Code</label>
+                        <select style="width: 250px; height: 40px;" id="courseCode" name="department_name" required disabled>
+                            <option value="">-- Select Department First --</option>
+                        </select>
+                        <small>Course codes populate automatically based on your department.</small>
+                    </div>
+
+                    <!--
+                    <div class="form-group">
+                        <label for="term">Term (Optional)</label>
+                        <input type="text" id="term" name="term"
+                               placeholder="e.g., Fall 2025, Spring 2026">
+                    </div>
+                    -->
+
+                    <button type="submit" id="searchBtn" disabled>Search OER Resources</button>
+                </form>
+            </section>
+
+            <section id="resultsSection" class="results-section" style="display: none;">
+                <h2>Search Results</h2>
+                <div id="resultsContainer"></div>
+            </section>
+
+            <section id="loadingSection" class="loading-section" style="display: none;">
+                <div class="spinner"></div>
+                <p>Searching for OER resources... This may take a minute.</p>
+            </section>
+
+            <section id="errorSection" class="error-section" style="display: none;">
+                <div class="error-message" id="errorMessage"></div>
+            </section>
+        </main>
+
+        <footer>
+            <p>Developed for GGC CLIENTS - ITEC 4700</p>
+            <p><a href="/api/stats" target="_blank">View Usage Statistics</a></p>
+        </footer>
+    </div>
+
+    <script>
+        const deptSelect   = document.getElementById('department');
+        const courseSelect = document.getElementById('courseCode');
+        const searchBtn    = document.getElementById('searchBtn');
+
+        // Load departments on page load
+        async function loadDepartments() {
+            try {
+                const res  = await fetch('/api/departments');
+                const data = await res.json();
+
+                deptSelect.innerHTML = '<option value="">-- Select a Department --</option>';
+                data.forEach(dept => {
+                    const opt = document.createElement('option');
+                    opt.value       = dept.code;
+                    opt.textContent = dept.code;
+                    deptSelect.appendChild(opt);
+                });
+            } catch (err) {
+                deptSelect.innerHTML = '<option value="">Failed to load departments</option>';
+                console.error('Department load error:', err);
+            }
+        }
+
+        // Load courses when a department is selected
+        async function loadCourses(dept) {
+            courseSelect.innerHTML = '<option value="">Loading courses...</option>';
+            courseSelect.disabled  = true;
+            searchBtn.disabled     = true;
+
+            try {
+                const res  = await fetch(`/api/courses/${dept}`);
+                const data = await res.json();
+
+                courseSelect.innerHTML = '<option value="">-- Select a Course --</option>';
+                data.forEach(course => {
+                    const opt = document.createElement('option');
+                    opt.value       = course.code;           
+                    opt.textContent = course.name;  
+                    courseSelect.appendChild(opt);
+                });
+                courseSelect.disabled = false;
+            } catch (err) {
+                courseSelect.innerHTML = '<option value="">Failed to load courses</option>';
+                console.error('Course load error:', err);
+            }
+        }
+
+        deptSelect.addEventListener('change', function () {
+            if (this.value) {
+                loadCourses(this.value);
+            } else {
+                courseSelect.innerHTML = '<option value="">-- Select Department First --</option>';
+                courseSelect.disabled  = true;
+                searchBtn.disabled     = true;
+            }
+        });
+
+        courseSelect.addEventListener('change', function () {
+            searchBtn.disabled = !this.value;
+        });
+
+        loadDepartments();
+    </script>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
