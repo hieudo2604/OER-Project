@@ -1,10 +1,6 @@
-"""
-Main OER AI Agent
-Orchestrates the complete workflow: syllabus analysis, OER search, evaluation, and reporting
-"""
 import time
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List
 import logging
 
 from config import Config
@@ -494,104 +490,6 @@ class OERAgent:
         
         return '\n'.join(guidance)
     
-#     def _get_llm_suggested_resources(self, course_code: str, syllabus_info: Dict, keywords: str = None) -> List[Dict]:
-#         """Use LLM to suggest OER resources when scrapers fail"""
-#         system_prompt = """You are an expert in open educational resources (OER). 
-# Suggest relevant OER resources for courses. Provide realistic resource suggestions with titles, 
-# descriptions, and URLs to common OER platforms like OpenStax, OER Commons, MERLOT, etc."""
-        
-#         prompt = f"""Course: {course_code}
-# Title: {syllabus_info.get('title', course_code)}
-# Description: {syllabus_info.get('description', '')[:500]}
-
-# Suggest 5-10 relevant OER resources for this course. For each resource, provide:
-# 1. Title
-# 2. Brief description
-# 3. URL (use a realistic OER platform URL like openstax.org, oercommons.org, etc.)
-# 4. License type (e.g., CC BY, CC BY-SA)
-# 5. Author/Publisher
-
-# Format as a numbered list."""
-        
-#         try:
-#             response = self.llm.generate(prompt, system_prompt, max_tokens=2000)
-#         except Exception as e:
-#             logger.error(f"LLM generation failed: {e}")
-#             # Return some default suggestions
-#             return self._get_default_suggestions(course_code, keywords)
-        
-#         if not response:
-#             return self._get_default_suggestions(course_code, keywords)
-        
-#         # Parse LLM response into resource format
-#         resources = []
-#         lines = response.split('\n')
-#         current_resource = {}
-        
-#         for line in lines:
-#             line = line.strip()
-#             if not line or line.startswith('#'):
-#                 continue
-            
-#             # Look for numbered items
-#             if re.match(r'^\d+[\.\)]', line):
-#                 if current_resource:
-#                     resources.append(current_resource)
-#                 current_resource = {
-#                     'title': '',
-#                     'description': '',
-#                     'url': '',
-#                     'license': 'CC BY',
-#                     'author': '',
-#                     'source': 'LLM Suggested',
-#                     'query': course_code
-#                 }
-#                 # Extract title (remove number)
-#                 title = re.sub(r'^\d+[\.\)]\s*', '', line)
-#                 current_resource['title'] = title[:200]
-            
-#             elif current_resource:
-#                 line_lower = line.lower()
-#                 if 'url' in line_lower or 'http' in line_lower:
-#                     # Extract URL
-#                     url_match = re.search(r'https?://[^\s]+', line)
-#                     if url_match:
-#                         current_resource['url'] = url_match.group(0)
-#                 elif 'license' in line_lower or 'cc' in line_lower:
-#                     # Extract license
-#                     license_match = re.search(r'CC\s*[A-Z\-]+', line, re.IGNORECASE)
-#                     if license_match:
-#                         current_resource['license'] = license_match.group(0)
-#                 elif 'author' in line_lower or 'publisher' in line_lower:
-#                     # Extract author
-#                     author = re.sub(r'^(author|publisher):\s*', '', line, flags=re.IGNORECASE)
-#                     current_resource['author'] = author[:100]
-#                 else:
-#                     # Add to description
-#                     if current_resource['description']:
-#                         current_resource['description'] += ' ' + line
-#                     else:
-#                         current_resource['description'] = line
-#                     current_resource['description'] = current_resource['description'][:500]
-        
-#         if current_resource:
-#             resources.append(current_resource)
-        
-#         # If parsing failed, create at least one resource with the response
-#         if not resources:
-#             resources.append({
-#                 'title': f'OER Resources for {course_code}',
-#                 'description': response[:500],
-#                 'url': 'https://alg.manifoldapp.org',
-#                 'license': 'CC BY',
-#                 'author': 'Various',
-#                 'source': 'LLM Suggested',
-#                 'query': course_code
-#             })
-        
-#         logger.info(f"LLM suggested {len(resources)} resources")
-#         return resources
-    
     def _get_llm_suggested_resources(self, course_code: str, syllabus_info: Dict, keywords: str = None) -> List[Dict]:
         system_prompt = """You are an OER expert.
 
@@ -741,14 +639,197 @@ BAD (NEVER RETURN):
             'docs.python.org',
         ]
         return any(p in url_lower for p in good_patterns)
+    
+    def _search_open_textbook_library(self, search_term: str, course_code: str) -> List[Dict]:
+        """Search Open Textbook Library JSON API and return the best matching book."""
+        import requests
+        from urllib.parse import quote
 
+        try:
+            search_encoded = quote(search_term)
+            url = f"https://open.umn.edu/opentextbooks/textbooks.json?q={search_encoded}"
+            logger.info(f"Querying Open Textbook Library API: {url}")
+
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            books = data.get('data', [])
+            if not books:
+                logger.warning(f"No books found in Open Textbook Library for: {search_term}")
+                return []
+
+            # Pick the top 2 most relevant books
+            results = []
+            for book in books[:2]:
+                book_id = book.get('id')
+                title = book.get('title', '')
+                description = book.get('description', '') or book.get('synopsis', '')
+                author_list = book.get('authors', [])
+                author = ', '.join(
+                    f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
+                    for a in author_list
+                ) if author_list else 'Unknown'
+                license_info = book.get('license', {})
+                license_name = license_info.get('name', 'CC BY') if isinstance(license_info, dict) else str(license_info)
+
+                license_map = {
+                    'Attribution': 'CC BY',
+                    'Attribution-ShareAlike': 'CC BY-SA',
+                    'Attribution-NoDerivatives': 'CC BY-ND',
+                    'Attribution-NonCommercial': 'CC BY-NC',
+                    'Attribution-NonCommercial-ShareAlike': 'CC BY-NC-SA',
+                    'Attribution-NonCommercial-NoDerivatives': 'CC BY-NC-ND',
+                }
+                license_name = license_map.get(license_name, license_name)
+
+                if not book_id or not title:
+                    continue
+
+                results.append({
+                    'title': title,
+                    'description': description[:300] if description else f'Open textbook for {course_code}',
+                    'url': f'https://open.umn.edu/opentextbooks/textbooks/{book_id}',
+                    'license': license_name,
+                    'author': author,
+                    'source': 'Open Textbook Library',
+                    'query': search_term
+                })
+                logger.info(f"Found OTL book: {title} → /textbooks/{book_id}")
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"Open Textbook Library API failed: {e}")
+            return []
+
+    def _search_doab(self, search_term: str, course_code: str) -> List[Dict]:
+        """Search DOAB (Directory of Open Access Books) JSON API."""
+        import requests
+        from urllib.parse import quote
+
+        LICENSE_MAP = {
+            'Attribution': 'CC BY',
+            'Attribution-ShareAlike': 'CC BY-SA',
+            'Attribution-NoDerivatives': 'CC BY-ND',
+            'Attribution-NonCommercial': 'CC BY-NC',
+            'Attribution-NonCommercial-ShareAlike': 'CC BY-NC-SA',
+            'Attribution-NonCommercial-NoDerivatives': 'CC BY-NC-ND',
+        }
+
+        try:
+            search_encoded = quote(search_term)
+            url = f"https://directory.doabooks.org/rest/search?query={search_encoded}&expand=metadata&limit=5"
+            logger.info(f"Querying DOAB API: {url}")
+
+            response = requests.get(
+                url,
+                headers={"Accept": "application/json"},
+                timeout=10
+            )
+            response.raise_for_status()
+            books = response.json()
+
+            if not books:
+                logger.warning(f"No DOAB results for: {search_term}")
+                return []
+
+            results = []
+            for book in books[:2]:
+                # Extract metadata fields from the nested metadata list
+                metadata = {m['key']: m['value'] for m in book.get('metadata', [])}
+
+                title = metadata.get('dc.title', '')
+                author = metadata.get('dc.contributor.author', metadata.get('dc.creator', 'Unknown'))
+                description = metadata.get('dc.description.abstract', f'Open access book for {course_code}')
+                raw_license = metadata.get('dc.rights', metadata.get('oapen.license.spdx', 'CC BY'))
+                license_name = LICENSE_MAP.get(raw_license, raw_license)
+                handle = book.get('handle', '')
+
+                if not title or not handle:
+                    continue
+
+                results.append({
+                    'title': title,
+                    'description': description[:300],
+                    'url': f'https://directory.doabooks.org/handle/{handle}',
+                    'license': license_name,
+                    'author': author,
+                    'source': 'DOAB',
+                    'query': search_term
+                })
+                logger.info(f"Found DOAB book: {title}")
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"DOAB API failed: {e}")
+            return []
+    
+    def _search_openstax(self, search_term: str, course_code: str) -> List[Dict]:
+        """Search OpenStax books using their public GitHub approved-book-list JSON."""
+        import requests
+
+        try:
+            url = "https://raw.githubusercontent.com/openstax/content-manager-approved-books/main/approved-book-list.json"
+            logger.info(f"Querying OpenStax approved book list for: {search_term}")
+
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract all unique slugs from the nested structure
+            # Structure: approved_books[].versions[].commit_metadata.books[].slug
+            all_slugs = set()
+            for entry in data.get('approved_books', []):
+                for version in entry.get('versions', []):
+                    for book in version.get('commit_metadata', {}).get('books', []):
+                        slug = book.get('slug', '')
+                        if slug:
+                            all_slugs.add(slug)
+
+            logger.info(f"OpenStax: extracted {len(all_slugs)} unique slugs")
+
+            keywords = search_term.lower().split()
+
+            # Score each slug by substring keyword matches
+            scored = []
+            for slug in all_slugs:
+                text = slug.replace('-', ' ').lower()
+                score = sum(1 for kw in keywords if kw in text)
+                if score > 0:
+                    scored.append((score, slug))
+
+            scored.sort(key=lambda x: x[0], reverse=True)
+
+            results = []
+            for _, slug in scored[:2]:
+                title = slug.replace('-', ' ').title()
+                results.append({
+                    'title': f'{title} - OpenStax',
+                    'description': f'Free peer-reviewed OpenStax textbook. Suitable for {course_code}.',
+                    'url': f'https://openstax.org/details/books/{slug}',
+                    'license': 'CC BY',
+                    'author': 'OpenStax',
+                    'source': 'OpenStax',
+                    'query': search_term
+                })
+                logger.info(f"Found OpenStax book: {title} → /details/books/{slug}")
+
+            if not results:
+                logger.warning(f"No OpenStax books matched: {search_term}")
+
+            return results
+
+        except Exception as e:
+            logger.warning(f"OpenStax book list fetch failed: {e}")
+            return []
+        
     def _get_default_suggestions(self, course_code: str, keywords: str = None) -> List[Dict]:
         """Get default OER suggestions when LLM fails"""
         subject = course_code.split()[0] if ' ' in course_code else course_code
         course_num = course_code.split()[1] if ' ' in course_code else ''
         search_term = keywords or course_code  # ← use meaningful keywords
-        search_term_encoded = search_term.replace(" ", "+")
-        hub_id = 19;
         
         # Map common subjects to relevant OER platforms
         subject_lower = subject.lower()
@@ -881,28 +962,16 @@ BAD (NEVER RETURN):
                 }
             ])
         
+        
+        #search_term_encoded = search_term.replace(" ", "+")
         # If no course-specific suggestions, add general ones
         if not default_resources:
-            default_resources = [
-                {
-                    'title': f'OER Commons - {search_term}',
-                    'description': f'Open educational resources for {course_code} from OER Commons.',
-                    'url': f'https://oercommons.org/hubs/{hub_id}/browse?f.search={search_term_encoded}&__hub_id={hub_id}',
-                    'license': 'CC BY',
-                    'author': 'OER Commons',
-                    'source': 'OER Commons',
-                    'query': search_term
-                },
-                {
-                    'title': f'MERLOT - {search_term}',
-                    'description': f'Educational materials for {course_code} from MERLOT.',
-                    'url': f'https://www.merlot.org/merlot/materials.htm?keywords={search_term_encoded}&sort.property=relevance',
-                    'license': 'CC BY',
-                    'author': 'MERLOT',
-                    'source': 'MERLOT',
-                    'query': search_term
-                }
-            ]
+            # Try to find a specific book from Open Textbook Library via API
+            otl_resources = self._search_open_textbook_library(search_term, course_code)
+            doab_resources = self._search_doab(search_term, course_code)
+            openstax_resources = self._search_openstax(search_term, course_code)
+            default_resources = otl_resources + openstax_resources + doab_resources
+            
         
         logger.info(f"Created {len(default_resources)} course-specific default suggestions for {course_code}")
         return default_resources
